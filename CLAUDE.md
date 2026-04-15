@@ -1,0 +1,1 @@
+# **Go read AGENT.md for all instructions → [AGENT.md](AGENT.md#claude)**
