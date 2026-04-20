@@ -15,6 +15,15 @@ const categoriasRouter = require('./routes/categorias')
 const abonosCuentaRouter = require('./routes/abonos-cuenta')
 const tipoPagoRouter = require('./routes/tipo_pago')
 const formaPagoRouter = require('./routes/forma_pago')
+const departamentosRouter = require('./routes/departamentos')
+const municipiosRouter = require('./routes/municipios')
+const paisesRouter = require('./routes/paises')
+const actividadEconomicaRouter = require('./routes/actividad_economica')
+const clientesRouter = require('./routes/clientes')
+const tipoPersonaRouter = require('./routes/tipo_persona')
+const tipoDocumentoRouter = require('./routes/tipo_documento')
+const tipoEstablecimientoRouter = require('./routes/tipo_establecimiento')
+const empresaRouter = require('./routes/empresa')
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -36,6 +45,15 @@ app.use('/api/categorias', categoriasRouter);
 app.use('/api/abonos-cuenta', abonosCuentaRouter);
 app.use('/api/tipo_pago', tipoPagoRouter);
 app.use('/api/forma_pago', formaPagoRouter);
+app.use('/api/departamentos', departamentosRouter);
+app.use('/api/municipios', municipiosRouter);
+app.use('/api/paises', paisesRouter);
+app.use('/api/actividad-economica', actividadEconomicaRouter);
+app.use('/api/clientes', clientesRouter);
+app.use('/api/tipo-persona', tipoPersonaRouter);
+app.use('/api/tipo-documento', tipoDocumentoRouter);
+app.use('/api/tipo-establecimiento', tipoEstablecimientoRouter);
+app.use('/api/empresa', empresaRouter);
 app.get('/', (req, res) => res.json({ message: 'Cervecería API v1.0.0' }));
 
 // Manejo de errores
