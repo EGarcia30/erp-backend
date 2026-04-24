@@ -24,6 +24,9 @@ const tipoPersonaRouter = require('./routes/tipo_persona')
 const tipoDocumentoRouter = require('./routes/tipo_documento')
 const tipoEstablecimientoRouter = require('./routes/tipo_establecimiento')
 const empresaRouter = require('./routes/empresa')
+const unidadesMedidaRouter = require('./routes/unidades_medida')
+const tipoItemRouter = require('./routes/tipo_item')
+const tributosRouter = require('./routes/tributos')
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -54,6 +57,9 @@ app.use('/api/tipo-persona', tipoPersonaRouter);
 app.use('/api/tipo-documento', tipoDocumentoRouter);
 app.use('/api/tipo-establecimiento', tipoEstablecimientoRouter);
 app.use('/api/empresa', empresaRouter);
+app.use('/api/unidades-medida', unidadesMedidaRouter);
+app.use('/api/tipo-item', tipoItemRouter);
+app.use('/api/tributos', tributosRouter);
 app.get('/', (req, res) => res.json({ message: 'Cervecería API v1.0.0' }));
 
 // Manejo de errores

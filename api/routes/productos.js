@@ -50,11 +50,24 @@ router.get('/', async (req, res) => {
             p.cantidad_maxima::numeric, p.precio_compra::numeric, 
             p.precio_venta::numeric, p.precio_venta::numeric as precio_venta_original,
             p.fecha_creado, p.activo,
+            p.tipo_item_id, p.unidad_medida_id,
             c.codigo as categoria_codigo, 
             c.nombre as categoria_nombre, 
-            c.id as categoria_id
+            c.id as categoria_id,
+            ti.nombre as tipo_item_nombre,
+            um.nombre as unidad_medida_nombre,
+            um.codigo as unidad_medida_codigo,
+            COALESCE(
+                (SELECT json_agg(json_build_object('id', t.id, 'codigo', t.codigo, 'nombre', t.nombre))
+                 FROM public.productos_tributarios pt
+                 JOIN public.tributos t ON pt.tributo_id = t.id
+                 WHERE pt.producto_id = p.id),
+                '[]'
+            ) as tributos
         FROM public.productos p
         LEFT JOIN public.categorias c ON p.categoria_id = c.id
+        LEFT JOIN public.tipo_item ti ON p.tipo_item_id = ti.id
+        LEFT JOIN public.unidades_medida um ON p.unidad_medida_id = um.id
         WHERE ${whereClause}
         ORDER BY p.id DESC
         LIMIT $${paramIndex} OFFSET $${paramIndex + 1}
@@ -189,79 +202,82 @@ router.patch('/:id/toggle', async (req, res) => {
     }
 });
 
-// ✅ PATCH /api/productos/:id - CON CATEGORÍA Completa (INSERT + SELECT)
+// ✅ PATCH /api/productos/:id - ACTUALIZAR con transaccin para tributos
 router.patch('/:id', async (req, res) => {
+    const client = await db.pool.connect();
     try {
         const { id } = req.params;
-        const updates = req.body;
+        const { tributos, ...updates } = req.body;
 
-        // Validar que existan campos
-        if (!updates || Object.keys(updates).length === 0) {
-            return res.status(400).json({ 
-                success: false,
-                message: 'Debe enviar al menos un campo para actualizar'
-            });
+        await client.query('BEGIN');
+
+        // 1. UPDATE dinámico de campos básicos
+        if (Object.keys(updates).length > 0) {
+            const setClause = Object.keys(updates)
+                .map((key, index) => `${key} = $${index + 1}`)
+                .join(', ');
+            
+            const updateQuery = `UPDATE public.productos SET ${setClause} WHERE id = $${Object.keys(updates).length + 1}`;
+            await client.query(updateQuery, [...Object.values(updates), id]);
         }
 
-        // 1. UPDATE dinámico
-        const setClause = Object.keys(updates)
-            .map(key => `${key} = $${Object.keys(updates).indexOf(key) + 1}`)
-            .join(', ');
-
-        const updateQuery = `
-            UPDATE public.productos 
-            SET ${setClause}
-            WHERE id = $${Object.keys(updates).length + 1}
-            RETURNING id
-        `;
-
-        const values = [...Object.values(updates), id];
-        const updateResult = await db.query(updateQuery, values);
-
-        if (updateResult.rows.length === 0) {
-            return res.status(404).json({ 
-                success: false,
-                message: 'Producto no encontrado' 
-            });
+        // 2. Sincronizar Tributos (si se envían)
+        if (tributos && Array.isArray(tributos)) {
+            await client.query('DELETE FROM public.productos_tributarios WHERE producto_id = $1', [id]);
+            for (const tributo_id of tributos) {
+                await client.query(
+                    'INSERT INTO public.productos_tributarios (producto_id, tributo_id) VALUES ($1, $2)',
+                    [id, tributo_id]
+                );
+            }
         }
 
-        const updatedId = updateResult.rows[0].id;
+        await client.query('COMMIT');
 
-        // 2. SELECT completo CON CATEGORÍA
+        // 3. SELECT completo con categoría, campos DTE y tributos
         const selectQuery = `
             SELECT 
                 p.id, p.descripcion, p.proveedor, p.presentacion,
                 p.cantidad_disponible::numeric, p.cantidad_minima::numeric, 
                 p.cantidad_maxima::numeric, p.precio_compra::numeric, 
                 p.precio_venta::numeric, p.categoria_id, p.fecha_creado, p.activo,
-                c.codigo as categoria_codigo,
-                c.nombre as categoria_nombre
+                p.tipo_item_id, p.unidad_medida_id,
+                c.codigo as categoria_codigo, c.nombre as categoria_nombre,
+                ti.nombre as tipo_item_nombre,
+                um.nombre as unidad_medida_nombre,
+                um.codigo as unidad_medida_codigo,
+                COALESCE(
+                    (SELECT json_agg(json_build_object('id', t.id, 'codigo', t.codigo, 'nombre', t.nombre))
+                     FROM public.productos_tributarios pt
+                     JOIN public.tributos t ON pt.tributo_id = t.id
+                     WHERE pt.producto_id = p.id),
+                    '[]'
+                ) as tributos
             FROM public.productos p
             LEFT JOIN public.categorias c ON p.categoria_id = c.id
+            LEFT JOIN public.tipo_item ti ON p.tipo_item_id = ti.id
+            LEFT JOIN public.unidades_medida um ON p.unidad_medida_id = um.id
             WHERE p.id = $1
         `;
         
-        const productoCompleto = await db.query(selectQuery, [updatedId]);
+        const productoCompleto = await client.query(selectQuery, [id]);
         
-        res.json({
-            success: true,
-            data: productoCompleto.rows[0]
-        });
+        res.json({ success: true, data: productoCompleto.rows[0] });
 
     } catch (error) {
+        await client.query('ROLLBACK');
         console.error('Error al actualizar producto:', error);
-        res.status(500).json({
-            success: false,
-            message: 'Error en el servidor',
-            error: error.message
-        });
+        res.status(500).json({ success: false, message: 'Error en el servidor', error: error.message });
+    } finally {
+        client.release();
     }
 });
 
-// ✅ POST /api/productos - CREAR nuevo producto con FECHA LOCAL (sin hora) y CATEGORÍA
+// ✅ POST /api/productos - CREAR nuevo producto con transaccin para tributos
 router.post('/', async (req, res) => {
+    const client = await db.pool.connect();
     try {
-        const producto = req.body;
+        const { tributos, ...producto } = req.body;
         
         const fechaLocal = new Date().toLocaleString('sv-SV', {
             timeZone: 'America/El_Salvador',
@@ -270,13 +286,16 @@ router.post('/', async (req, res) => {
             day: '2-digit',
         }).split('/').reverse().join('-');
 
+        await client.query('BEGIN');
+
         // 1. INSERT básico
         const insertQuery = `
             INSERT INTO public.productos (
                 descripcion, proveedor, presentacion, 
                 cantidad_disponible, cantidad_minima, cantidad_maxima,
-                precio_compra, precio_venta, categoria_id, activo, fecha_creado
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, COALESCE($9, 1), true, $10)
+                precio_compra, precio_venta, categoria_id, activo, fecha_creado,
+                tipo_item_id, unidad_medida_id
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, COALESCE($9, 1), true, $10, COALESCE($11, 1), COALESCE($12, (SELECT id FROM public.unidades_medida WHERE codigo = '59' LIMIT 1)))
             RETURNING id
         `;
         
@@ -285,34 +304,62 @@ router.post('/', async (req, res) => {
             producto.cantidad_disponible, producto.cantidad_minima, producto.cantidad_maxima,
             producto.precio_compra, producto.precio_venta,
             producto.categoria_id,
-            fechaLocal
+            fechaLocal,
+            producto.tipo_item_id,
+            producto.unidad_medida_id
         ];
         
-        const insertResult = await db.query(insertQuery, insertValues);
+        const insertResult = await client.query(insertQuery, insertValues);
         const newId = insertResult.rows[0].id;
 
-        // 2. SELECT completo con categoría
+        // 2. Insertar Tributos
+        if (tributos && Array.isArray(tributos)) {
+            for (const tributo_id of tributos) {
+                await client.query(
+                    'INSERT INTO public.productos_tributarios (producto_id, tributo_id) VALUES ($1, $2)',
+                    [newId, tributo_id]
+                );
+            }
+        }
+
+        await client.query('COMMIT');
+
+        // 3. SELECT completo con categoría, campos DTE y tributos
         const selectQuery = `
             SELECT 
                 p.id, p.descripcion, p.proveedor, p.presentacion,
                 p.cantidad_disponible::numeric, p.cantidad_minima::numeric, 
                 p.cantidad_maxima::numeric, p.precio_compra::numeric, 
                 p.precio_venta::numeric, p.categoria_id, p.fecha_creado, p.activo,
-                c.codigo as categoria_codigo, c.nombre as categoria_nombre
+                p.tipo_item_id, p.unidad_medida_id,
+                c.codigo as categoria_codigo, c.nombre as categoria_nombre,
+                ti.nombre as tipo_item_nombre,
+                um.nombre as unidad_medida_nombre,
+                um.codigo as unidad_medida_codigo,
+                COALESCE(
+                    (SELECT json_agg(json_build_object('id', t.id, 'codigo', t.codigo, 'nombre', t.nombre))
+                     FROM public.productos_tributarios pt
+                     JOIN public.tributos t ON pt.tributo_id = t.id
+                     WHERE pt.producto_id = p.id),
+                    '[]'
+                ) as tributos
             FROM public.productos p
             LEFT JOIN public.categorias c ON p.categoria_id = c.id
+            LEFT JOIN public.tipo_item ti ON p.tipo_item_id = ti.id
+            LEFT JOIN public.unidades_medida um ON p.unidad_medida_id = um.id
             WHERE p.id = $1
         `;
         
-        const productoCompleto = await db.query(selectQuery, [newId]);
+        const productoCompleto = await client.query(selectQuery, [newId]);
         
-        res.json({
-            success: true,
-            data: productoCompleto.rows[0]
-        });
+        res.json({ success: true, data: productoCompleto.rows[0] });
+
     } catch (error) {
+        await client.query('ROLLBACK');
         console.error('Error al crear producto:', error);
         res.status(500).json({ success: false, error: error.message });
+    } finally {
+        client.release();
     }
 });
 
