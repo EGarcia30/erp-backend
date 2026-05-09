@@ -21,10 +21,60 @@ router.get('/', async (req, res) => {
       LEFT JOIN public.tipo_documento td ON c.tipo_documento = td.codigo
       ORDER BY c.nombre ASC
     `);
-    res.json(result.rows);
+    res.json({ success: true, data: result.rows });
   } catch (err) {
     console.error('Error al obtener clientes:', err);
-    res.status(500).json({ error: 'Error interno del servidor' });
+    res.status(500).json({ success: false, error: 'Error interno del servidor' });
+  }
+});
+
+/**
+ * @route GET /api/clientes/pag
+ * @desc Obtiene clientes con paginación y búsqueda (DTE Ready)
+ */
+router.get('/pag', async (req, res) => {
+  try {
+    const { page = 1, limit = 10, search = '' } = req.query;
+    const offset = (page - 1) * limit;
+
+    let query = `
+      SELECT c.*, td.nombre as tipo_documento_nombre
+      FROM public.clientes c
+      LEFT JOIN public.tipo_documento td ON c.tipo_documento = td.codigo
+      WHERE 1=1
+    `;
+    const queryParams = [];
+
+    if (search) {
+      queryParams.push(`%${search}%`);
+      query += ` AND (c.nombre ILIKE $${queryParams.length} OR c.num_documento ILIKE $${queryParams.length} OR c.nrc ILIKE $${queryParams.length})`;
+    }
+
+    // Clonar para el conteo total
+    const countQuery = `SELECT COUNT(*) FROM (${query}) as total`;
+    const totalResult = await pool.query(countQuery, queryParams);
+    const totalItems = parseInt(totalResult.rows[0].count);
+
+    // Añadir orden, limite y offset
+    query += ` ORDER BY c.nombre ASC LIMIT $${queryParams.length + 1} OFFSET $${queryParams.length + 2}`;
+    queryParams.push(limit, offset);
+
+    const result = await pool.query(query, queryParams);
+    const totalPages = Math.ceil(totalItems / limit);
+
+    res.json({
+      success: true,
+      data: result.rows,
+      pagination: {
+        totalItems,
+        totalPages,
+        currentPage: parseInt(page),
+        limit: parseInt(limit)
+      }
+    });
+  } catch (err) {
+    console.error('Error al obtener clientes paginados:', err);
+    res.status(500).json({ success: false, error: 'Error interno del servidor' });
   }
 });
 

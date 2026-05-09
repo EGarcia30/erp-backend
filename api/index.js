@@ -27,6 +27,8 @@ const empresaRouter = require('./routes/empresa')
 const unidadesMedidaRouter = require('./routes/unidades_medida')
 const tipoItemRouter = require('./routes/tipo_item')
 const tributosRouter = require('./routes/tributos')
+const dteCatalogosRouter = require('./routes/dte_catalogos')
+const tipoDteRouter = require('./routes/tipo_dte') // 👈 NUEVO
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -60,6 +62,8 @@ app.use('/api/empresa', empresaRouter);
 app.use('/api/unidades-medida', unidadesMedidaRouter);
 app.use('/api/tipo-item', tipoItemRouter);
 app.use('/api/tributos', tributosRouter);
+app.use('/api/dte-catalogos', dteCatalogosRouter);
+app.use('/api/tipo-dte', tipoDteRouter); // 👈 NUEVO
 app.get('/', (req, res) => res.json({ message: 'Cervecería API v1.0.0' }));
 
 // Manejo de errores

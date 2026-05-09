@@ -12,7 +12,9 @@ router.get('/', async (req, res) => {
       SELECT e.*, d.nombre as departamento_nombre, m.nombre as municipio_nombre, 
              a.descripcion as actividad_nombre, p.nombre as pais_nombre,
              te.nombre as establecimiento_nombre, tp.nombre as tipo_persona_nombre,
-             td.nombre as tipo_documento_nombre
+             td.nombre as tipo_documento_nombre,
+             ad.descripcion as ambiente_nombre, mf.descripcion as modelo_nombre,
+             tt.descripcion as transmision_nombre
       FROM public.configuracion_empresa e
       LEFT JOIN public.departamentos d ON e.departamento_cod = d.codigo
       LEFT JOIN public.municipios m ON e.municipio_cod = m.codigo AND e.departamento_cod = m.departamento_cod
@@ -21,6 +23,9 @@ router.get('/', async (req, res) => {
       LEFT JOIN public.tipo_establecimiento te ON e.tipo_establecimiento = te.codigo
       LEFT JOIN public.tipo_persona tp ON e.tipo_persona = tp.codigo
       LEFT JOIN public.tipo_documento td ON e.tipo_documento = td.codigo
+      LEFT JOIN public.ambiente_destino ad ON e.ambiente = ad.codigo
+      LEFT JOIN public.modelo_facturacion mf ON e.tipo_modelo = mf.codigo
+      LEFT JOIN public.tipo_transmision tt ON e.tipo_operacion = tt.codigo
       WHERE e.id = 1
     `);
     
@@ -42,7 +47,8 @@ router.put('/', async (req, res) => {
   const {
     tipo_documento, num_documento, nrc, nombre_legal, nombre_comercial, cod_actividad,
     tipo_establecimiento, telefono, correo, tipo_persona, pais_cod, departamento_cod,
-    municipio_cod, direccion, cod_estable_mh, cod_estable, cod_punto_venta_mh, cod_punto_venta, logo_url
+    municipio_cod, direccion, cod_estable_mh, cod_estable, cod_punto_venta_mh, cod_punto_venta, 
+    logo_url, ambiente, tipo_modelo, tipo_operacion
   } = req.body;
 
   try {
@@ -52,12 +58,14 @@ router.put('/', async (req, res) => {
           cod_actividad = $6, tipo_establecimiento = $7, telefono = $8, correo = $9, tipo_persona = $10, 
           pais_cod = $11, departamento_cod = $12, municipio_cod = $13, direccion = $14, 
           cod_estable_mh = $15, cod_estable = $16, cod_punto_venta_mh = $17, cod_punto_venta = $18, 
-          logo_url = $19, fecha_modificado = NOW()
+          logo_url = $19, ambiente = $20, tipo_modelo = $21, tipo_operacion = $22,
+          fecha_modificado = NOW()
       WHERE id = 1
       RETURNING *`,
       [tipo_documento, num_documento, nrc, nombre_legal, nombre_comercial, cod_actividad,
        tipo_establecimiento, telefono, correo, tipo_persona, pais_cod, departamento_cod,
-       municipio_cod, direccion, cod_estable_mh, cod_estable, cod_punto_venta_mh, cod_punto_venta, logo_url]
+       municipio_cod, direccion, cod_estable_mh, cod_estable, cod_punto_venta_mh, cod_punto_venta, 
+       logo_url, ambiente, tipo_modelo, tipo_operacion]
     );
     
     if (result.rows.length === 0) {

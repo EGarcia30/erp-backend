@@ -2,7 +2,9 @@ const express = require("express");
 const router = express.Router();
 const db = require("../config/database");
 
-// ✅ POST /abonos-cuenta - sin tipo_pago
+const dteUtils = require("../utils/dteUtils");
+
+// ✅ POST /abonos-cuenta - Motor Fiscal Integrado (HU7668)
 router.post("/", async (req, res) => {
   const { cuenta_id, total_abonado, forma_pago_id, referencia, nota } = req.body;
 
@@ -48,7 +50,7 @@ router.post("/", async (req, res) => {
       return res.status(400).json({ success: false, error: "Forma de pago inválida" });
     }
 
-    // 3. Insertar abono (sin tipo_pago_id)
+    // 3. Insertar abono
     const abono = await client.query(
       `INSERT INTO public.abonos_cuenta (
           cuenta_id,
@@ -63,7 +65,7 @@ router.post("/", async (req, res) => {
       [cuenta_id, total_abonado, forma_pago_id, referencia, nota, fechaActual]
     );
 
-    // ✅ 4. Actualizar tabla cuentas (como ya tenías)
+    // 4. Actualizar tabla cuentas
     const cuentaActualizada = await client.query(
       `UPDATE public.cuentas
        SET
@@ -91,13 +93,48 @@ router.post("/", async (req, res) => {
            ELSE 'pendiente'
          END
        WHERE id = $1
-       RETURNING id, cliente, total, total_pagado, total_pendiente, total_vuelto, estado`,
+       RETURNING id, cliente, total, total_pagado, total_pendiente, total_vuelto, estado, tipo_dte`,
       [cuenta_id, cuenta.rows[0].total]
     );
 
-    await client.query("COMMIT");
-
     const cuentaData = cuentaActualizada.rows[0];
+    let dteResult = null;
+
+    // 🚀 LÓGICA DTE AUTOMÁTICA (HU7668)
+    if (cuentaData.estado === 'pagado') {
+        try {
+            // A. Generar JSON
+            const jsonDte = await dteUtils.generarJSONDTE(cuenta_id);
+            
+            // B. Generar PDF
+            const pdfBuffer = await dteUtils.generarPDF(jsonDte);
+            
+            // C. Generar Ticket (Texto)
+            const ticketTexto = await dteUtils.generarTicketTexto(jsonDte);
+
+            // D. Actualizar cuenta con el JSON y estado fiscal
+            await client.query(
+                `UPDATE public.cuentas 
+                 SET json_dte = $1, estado_dte = 'procesado', fecha_emision = NOW() 
+                 WHERE id = $2`,
+                [JSON.stringify(jsonDte), cuenta_id]
+            );
+
+            // E. Intentar enviar correo (asíncrono)
+            dteUtils.enviarCorreo(jsonDte, pdfBuffer).catch(e => console.error("Error envío correo:", e));
+
+            dteResult = {
+                json: jsonDte,
+                ticket: ticketTexto,
+                pdfBase64: pdfBuffer.toString('base64')
+            };
+        } catch (dteError) {
+            console.error("⚠️ Error generando DTE:", dteError.message);
+            // No revertimos el pago si falla el DTE, pero informamos
+        }
+    }
+
+    await client.query("COMMIT");
 
     res.json({
       success: true,
@@ -110,9 +147,9 @@ router.post("/", async (req, res) => {
           total_pagado: parseFloat(cuentaData.total_pagado),
           total_pendiente: parseFloat(cuentaData.total_pendiente),
           total_vuelto: parseFloat(cuentaData.total_vuelto),
-          estado: cuentaData.estado,
-          tipo_pago: cuentaData.tipo_pago // ✅ lo puedes devolver si quieres
-        }
+          estado: cuentaData.estado
+        },
+        dte: dteResult
       }
     });
   } catch (error) {

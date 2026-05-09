@@ -284,13 +284,24 @@ router.get('/:id', async (req, res) => {
     }
 });
 
-/// ✅ POST /cuentas - total_pendiente = total DESDE EL PRINCIPIO
+const { v4: uuidv4 } = require('uuid');
+
+/// ✅ POST /cuentas - Generación de Identidad DTE (HU7668)
 router.post('/', async (req, res) => {
-    const { cliente, total, tipo_cuenta, mesa_id, detalles } = req.body;
+    const { cliente, cliente_id, total, tipo_cuenta, mesa_id, detalles, tipo_dte = '01' } = req.body;
     
     const client = await db.pool.connect();
     try {
         await client.query("BEGIN");
+
+        // 1. Obtener configuración de empresa
+        const empresa = await client.query('SELECT cod_estable, ambiente, tipo_modelo, tipo_operacion FROM public.configuracion_empresa LIMIT 1');
+        const config = empresa.rows[0] || { 
+            cod_estable: '0000', 
+            ambiente: '00', 
+            tipo_modelo: '1', 
+            tipo_operacion: '1' 
+        };
 
         const fechaActual = new Date().toLocaleDateString('sv-SV', { 
             timeZone: 'America/El_Salvador',
@@ -306,17 +317,32 @@ router.post('/', async (req, res) => {
             }
         }
         
-        // ✅ INSERT ESPECÍFICO - total_pendiente = total
+        // 2. Generar UUID
+        const codigoGeneracion = uuidv4();
+        
+        // 3. Insert inicial con configuración dinámica de empresa
         const nuevaCuenta = await client.query(
             `INSERT INTO public.cuentas 
-             (cliente, total, tipo_cuenta, mesa_id, fecha_creado, 
-              total_pagado, total_pendiente, total_vuelto, estado) 
-             VALUES ($1, $2, $3, $4, $5, 0, $2, 0, 'pendiente') 
-             RETURNING id, cliente, total, total_pagado, total_pendiente, total_vuelto, estado`,
-            [cliente, total, tipo_cuenta, mesa_id || null, fechaActual]
+             (cliente, cliente_id, total, tipo_cuenta, mesa_id, fecha_creado, 
+              total_pagado, total_pendiente, total_vuelto, estado, tipo_dte, 
+              codigo_generacion, estado_dte, ambiente, tipo_modelo, tipo_operacion) 
+             VALUES ($1, $2, $3, $4, $5, $6, 0, $3, 0, 'pendiente', $7, $8, 'pendiente', $9, $10, $11) 
+             RETURNING id`,
+            [cliente, cliente_id || null, total, tipo_cuenta, mesa_id || null, fechaActual, 
+             tipo_dte, codigoGeneracion, config.ambiente, config.tipo_modelo, config.tipo_operacion]
         );
         
         const cuentaId = nuevaCuenta.rows[0].id;
+
+        // 4. Generar Numero de Control (DTE-tipo-estable-correlativo15)
+        const correlativo = cuentaId.toString().padStart(15, '0');
+        const numeroControl = `DTE-${tipo_dte}-${config.cod_estable}-${correlativo}`;
+        
+        // 5. Actualizar Numero de Control
+        await client.query(
+            'UPDATE public.cuentas SET numero_control = $1 WHERE id = $2',
+            [numeroControl, cuentaId]
+        );
         
         // Insert detalles...
         for (const detalle of detalles) {
@@ -332,17 +358,17 @@ router.post('/', async (req, res) => {
         
         await client.query("COMMIT");
 
-        // ✅ RETORNAR datos de BD (ya correctos)
         res.status(201).json({ 
             success: true, 
             data: {
-                id: parseInt(nuevaCuenta.rows[0].id),
-                cliente: nuevaCuenta.rows[0].cliente,
-                total: parseFloat(nuevaCuenta.rows[0].total),
-                total_pagado: parseFloat(nuevaCuenta.rows[0].total_pagado),
-                total_pendiente: parseFloat(nuevaCuenta.rows[0].total_pendiente),  // ✅ = total
-                total_vuelto: parseFloat(nuevaCuenta.rows[0].total_vuelto),
-                estado: nuevaCuenta.rows[0].estado  // ✅ 'pendiente'
+                id: parseInt(cuentaId),
+                cliente,
+                total: parseFloat(total),
+                tipo_dte,
+                codigo_generacion: codigoGeneracion,
+                numero_control: numeroControl,
+                estado_dte: 'pendiente',
+                estado: 'pendiente'
             } 
         });
         
