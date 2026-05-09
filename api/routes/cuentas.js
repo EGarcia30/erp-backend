@@ -2,6 +2,7 @@
 const express = require('express');
 const router = express.Router();
 const db = require('../config/database');
+const uuid = require('uuid');
 
 // ✅ GET /api/cuentas - CON TODOS LOS CAMPOS CALCULADOS
 router.get('/', async (req, res) => {
@@ -284,8 +285,6 @@ router.get('/:id', async (req, res) => {
     }
 });
 
-const { v4: uuidv4 } = require('uuid');
-
 /// ✅ POST /cuentas - Generación de Identidad DTE (HU7668)
 router.post('/', async (req, res) => {
     const { cliente, cliente_id, total, tipo_cuenta, mesa_id, detalles, tipo_dte = '01' } = req.body;
@@ -318,7 +317,7 @@ router.post('/', async (req, res) => {
         }
         
         // 2. Generar UUID
-        const codigoGeneracion = uuidv4();
+        const codigoGeneracion = uuid.v4(); // Genera un UUID único para esta cuenta/DTE
         
         // 3. Insert inicial con configuración dinámica de empresa
         const nuevaCuenta = await client.query(
