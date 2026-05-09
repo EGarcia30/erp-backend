@@ -2,7 +2,12 @@
 const express = require('express');
 const router = express.Router();
 const db = require('../config/database');
-const uuid = require('uuid');
+
+async function generateUUID() {
+  const { v4 } = await import('uuid');
+  return v4();
+}
+
 
 // ✅ GET /api/cuentas - CON TODOS LOS CAMPOS CALCULADOS
 router.get('/', async (req, res) => {
@@ -317,7 +322,7 @@ router.post('/', async (req, res) => {
         }
         
         // 2. Generar UUID
-        const codigoGeneracion = uuid.v4(); // Genera un UUID único para esta cuenta/DTE
+        const codigoGeneracion = await generateUUID(); // Genera un UUID único para esta cuenta/DTE
         
         // 3. Insert inicial con configuración dinámica de empresa
         const nuevaCuenta = await client.query(
