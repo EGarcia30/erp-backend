@@ -451,11 +451,11 @@ router.patch('/:id', async (req, res) => {
         }).split('/').reverse().join('-');
 
         const { id } = req.params;
-        const { cliente, tipo_cuenta, mesa_id, detalles } = req.body;
+        const { cliente, cliente_id, tipo_cuenta, mesa_id, detalles } = req.body;
 
         // Verificar cuenta pendiente
         const cuentaCheck = await db.query(
-            'SELECT id FROM public.cuentas WHERE id = $1 AND estado = $2', 
+            'SELECT id FROM public.cuentas WHERE id = $1 AND estado = $2',
             [id, 'pendiente']
         );
 
@@ -465,11 +465,10 @@ router.patch('/:id', async (req, res) => {
 
         // DELETE + INSERT detalles con promociones
         const [updateResult, deleteResult] = await Promise.all([
-            db.query(`UPDATE public.cuentas SET cliente = $1, tipo_cuenta = $2, mesa_id = $3 WHERE id = $4`, 
-                [cliente, tipo_cuenta, mesa_id || null, id]),
+            db.query(`UPDATE public.cuentas SET cliente = $1, cliente_id = $2, tipo_cuenta = $3, mesa_id = $4 WHERE id = $5`,
+                [cliente, cliente_id || null, tipo_cuenta, mesa_id || null, id]),
             db.query('DELETE FROM public.cuentas_detalle WHERE cuenta_id = $1', [id])
         ]);
-
         // ✅ INSERT NUEVOS DETALLES CON PROMO
         if (detalles && detalles.length > 0) {
             for (const detalle of detalles) {
