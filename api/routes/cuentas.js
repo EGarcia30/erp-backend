@@ -330,10 +330,10 @@ router.post('/', async (req, res) => {
         // 3. Insert inicial con configuración dinámica de empresa
         const nuevaCuenta = await client.query(
             `INSERT INTO public.cuentas 
-             (cliente, cliente_id, total, total_neto, total_iva, descuento_total, tipo_cuenta, mesa_id, fecha_creado, 
+             (cliente, cliente_id, total, total_neto, total_iva, descuento_total, tipo_cuenta, mesa_id, fecha_creado, fecha_emision,
               total_pagado, total_pendiente, total_vuelto, estado, tipo_dte, 
               codigo_generacion, estado_dte, ambiente, tipo_modelo, tipo_operacion) 
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 0, $3, 0, 'pendiente', $10, $11, 'pendiente', $12, $13, $14) 
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $9, 0, $3, 0, 'pendiente', $10, $11, 'pendiente', $12, $13, $14) 
              RETURNING id`,
             [cliente, cliente_id || null, total, totalNeto, totalIva, req.body.descuento_total || 0, tipo_cuenta, mesa_id || null, fechaActual, 
              tipo_dte, codigoGeneracion, config.ambiente, config.tipo_modelo, config.tipo_operacion]
