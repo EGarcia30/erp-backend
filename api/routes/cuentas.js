@@ -327,22 +327,36 @@ router.post('/', async (req, res) => {
         // 3. Insert inicial con configuración dinámica de empresa
         const nuevaCuenta = await client.query(
             `INSERT INTO public.cuentas 
-             (cliente, cliente_id, total, tipo_cuenta, mesa_id, fecha_creado, 
+             (cliente, cliente_id, total, descuento_total, tipo_cuenta, mesa_id, fecha_creado, 
               total_pagado, total_pendiente, total_vuelto, estado, tipo_dte, 
               codigo_generacion, estado_dte, ambiente, tipo_modelo, tipo_operacion) 
-             VALUES ($1, $2, $3, $4, $5, $6, 0, $3, 0, 'pendiente', $7, $8, 'pendiente', $9, $10, $11) 
+             VALUES ($1, $2, $3, $4, $5, $6, $7, 0, $3, 0, 'pendiente', $8, $9, 'pendiente', $10, $11, $12) 
              RETURNING id`,
-            [cliente, cliente_id || null, total, tipo_cuenta, mesa_id || null, fechaActual, 
+            [cliente, cliente_id || null, total, req.body.descuento_total || 0, tipo_cuenta, mesa_id || null, fechaActual, 
              tipo_dte, codigoGeneracion, config.ambiente, config.tipo_modelo, config.tipo_operacion]
         );
         
         const cuentaId = nuevaCuenta.rows[0].id;
 
-        // 4. Generar Numero de Control (DTE-tipo-estable-correlativo15)
-        const correlativo = cuentaId.toString().padStart(15, '0');
-        const numeroControl = `DTE-${tipo_dte}-${config.cod_estable}-${correlativo}`;
+        // 4. Generar Numero de Control INDEPENDIENTE por tipo_dte (DTE-tipo-estable-correlativo15)
+        // Bloqueamos la fila del tipo_dte para asegurar correlativo único y secuencial
+        const correlativoRes = await client.query(
+            `UPDATE public.dte_correlativos 
+             SET ultimo_correlativo = ultimo_correlativo + 1 
+             WHERE tipo_dte = $1 
+             RETURNING ultimo_correlativo`,
+            [tipo_dte]
+        );
+
+        if (correlativoRes.rows.length === 0) {
+            throw new Error(`No se encontró configuración de correlativo para el tipo de DTE: ${tipo_dte}`);
+        }
+
+        const nuevoCorrelativo = correlativoRes.rows[0].ultimo_correlativo;
+        const correlativoStr = nuevoCorrelativo.toString().padStart(15, '0');
+        const numeroControl = `DTE-${tipo_dte}-${config.cod_estable}-${correlativoStr}`;
         
-        // 5. Actualizar Numero de Control
+        // 5. Actualizar Numero de Control en la cuenta
         await client.query(
             'UPDATE public.cuentas SET numero_control = $1 WHERE id = $2',
             [numeroControl, cuentaId]
@@ -352,10 +366,12 @@ router.post('/', async (req, res) => {
         for (const detalle of detalles) {
             await client.query(
                 `INSERT INTO public.cuentas_detalle 
-                 (cuenta_id, producto_id, cantidad_vendida, precio_compra_actual, precio_venta, promocion_id, fecha_creado)
-                 VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+                 (cuenta_id, producto_id, cantidad_vendida, precio_compra_actual, precio_venta, precio_original, monto_descuento, promocion_id, fecha_creado)
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
                 [cuentaId, detalle.producto_id, detalle.cantidad_vendida, 
                  detalle.precio_compra_actual, detalle.precio_venta,
+                 detalle.precio_original || detalle.precio_venta,
+                 detalle.monto_descuento || 0,
                  detalle.promocion_id || null, fechaActual]
             );
         }

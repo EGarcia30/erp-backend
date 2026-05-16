@@ -98,22 +98,25 @@ router.post("/", async (req, res) => {
     );
 
     const cuentaData = cuentaActualizada.rows[0];
+
+    await client.query("COMMIT");
+    client.release(); // Liberamos el cliente antes de la lógica DTE
+
     let dteResult = null;
 
-    // 🚀 LÓGICA DTE AUTOMÁTICA (HU7668)
+    // 🚀 LÓGICA DTE AUTOMÁTICA (HU7668) - FUERA DE LA TRANSACCIÓN
     if (cuentaData.estado === 'pagado') {
         try {
-            // A. Generar JSON
+            // A. Generar JSON (Ahora sí verá todos los abonos porque ya se hizo COMMIT)
             const jsonDte = await dteUtils.generarJSONDTE(cuenta_id);
-            
+
             // B. Generar PDF
-            const pdfBuffer = await dteUtils.generarPDF(jsonDte);
-            
+            const pdfBuffer = await dteUtils.generarPDF(jsonDte);            
             // C. Generar Ticket (Texto)
             const ticketTexto = await dteUtils.generarTicketTexto(jsonDte);
 
             // D. Actualizar cuenta con el JSON y estado fiscal
-            await client.query(
+            await db.query(
                 `UPDATE public.cuentas 
                  SET json_dte = $1, estado_dte = 'procesado', fecha_emision = NOW() 
                  WHERE id = $2`,
@@ -130,11 +133,8 @@ router.post("/", async (req, res) => {
             };
         } catch (dteError) {
             console.error("⚠️ Error generando DTE:", dteError.message);
-            // No revertimos el pago si falla el DTE, pero informamos
         }
     }
-
-    await client.query("COMMIT");
 
     res.json({
       success: true,
@@ -153,11 +153,12 @@ router.post("/", async (req, res) => {
       }
     });
   } catch (error) {
-    await client.query("ROLLBACK");
+    if (client) {
+        try { await client.query("ROLLBACK"); } catch (rbError) { /* ignore */ }
+        client.release();
+    }
     console.error("❌ ERROR:", error.message);
     res.status(500).json({ success: false, error: error.message });
-  } finally {
-    client.release();
   }
 });
 

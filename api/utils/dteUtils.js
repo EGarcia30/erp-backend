@@ -2,6 +2,7 @@ const db = require('../config/database');
 const PDFDocument = require('pdfkit');
 const nodemailer = require('nodemailer');
 const QRCode = require('qrcode');
+const { numeroALetras } = require('./numeroALetras');
 
 /**
  * Utilidades para la gestión de DTE (Documentos Tributarios Electrónicos)
@@ -22,13 +23,14 @@ const dteUtils = {
                           ae.descripcion as cl_actividad_desc,
                           cl.direccion as cl_direccion, cl.correo as cl_correo,
                           cl.departamento_cod as cl_dep, cl.municipio_cod as cl_mun,
-                          td.nombre as cl_tipo_doc_nombre
+                          td.nombre as cl_tipo_doc_nombre,
+                          cl.tipo_documento as cl_tipo_doc_cod
                           FROM public.cuentas c 
                           LEFT JOIN public.clientes cl ON c.cliente_id = cl.id
                           LEFT JOIN public.tipo_documento td ON cl.tipo_documento = td.codigo
                           LEFT JOIN public.actividad_economica ae ON cl.cod_actividad = ae.codigo
                           WHERE c.id = $1`, [cuentaId]),
-                db.query(`SELECT cd.*, p.descripcion, p.unidad_medida_id, um.codigo as um_cod, 
+                db.query(`SELECT cd.*, p.descripcion, cd.precio_original, cd.monto_descuento, p.unidad_medida_id, um.codigo as um_cod, 
                           ti.codigo as ti_cod
                           FROM public.cuentas_detalle cd
                           JOIN public.productos p ON cd.producto_id = p.id
@@ -52,9 +54,9 @@ const dteUtils = {
 
             if (!cuenta || !emisor) throw new Error("Datos insuficientes para generar DTE");
 
-            const fecha = new Date();
-            const fechaIso = fecha.toISOString().split('T')[0];
-            const horaIso = fecha.toTimeString().split(' ')[0];
+            const fechaEmi = cuenta.fecha_emision ? new Date(cuenta.fecha_emision) : new Date();
+            const fechaIso = fechaEmi.toISOString().split('T')[0];
+            const horaIso = fechaEmi.toTimeString().split(' ')[0];
 
             // 2. Estructura base del JSON (v1)
             const dte = {
@@ -93,7 +95,7 @@ const dteUtils = {
                     codPuntoVenta: emisor.cod_punto_venta
                 },
                 receptor: {
-                    tipoDocumento: cuenta.cl_doc ? (cuenta.tipo_dte === '01' ? '13' : '36') : null,
+                    tipoDocumento: cuenta.cl_tipo_doc_cod || null,
                     numDocumento: cuenta.cl_doc || null,
                     nrc: cuenta.cl_nrc || null,
                     nombre: cuenta.cl_nombre || cuenta.cliente || "Consumidor Final",
@@ -107,56 +109,72 @@ const dteUtils = {
                     telefono: cuenta.cl_telefono || null,
                     correo: cuenta.cl_correo || null
                 },
-                cuerpoDocumento: detalles.map((d, idx) => ({
-                    numItem: idx + 1,
-                    tipoItem: parseInt(d.ti_cod) || 1,
-                    numeroDocumento: null,
-                    cantidad: parseFloat(d.cantidad_vendida),
-                    codigo: d.producto_id.toString(),
-                    codTributo: null,
-                    uniMedida: parseInt(d.um_cod) || 59,
-                    descripcion: d.descripcion,
-                    precioUni: parseFloat(d.precio_venta) / 1.13,
-                    montoDescu: 0,
-                    ventaNoSuj: 0,
-                    ventaExenta: 0,
-                    ventaGravada: parseFloat(d.precio_venta) * parseFloat(d.cantidad_vendida) / 1.13,
-                    tributos: ["20"],
-                    psv: 0,
-                    noGravado: 0,
-                    ivaItem: (parseFloat(d.precio_venta) * parseFloat(d.cantidad_vendida)) - (parseFloat(d.precio_venta) * parseFloat(d.cantidad_vendida) / 1.13)
-                })),
+                cuerpoDocumento: detalles.map((d, idx) => {
+                    const precioOriginal = parseFloat(d.precio_original);
+                    const precioCobrado = parseFloat(d.precio_venta);
+                    const cantidad = parseFloat(d.cantidad_vendida);
+                    const montoDescuentoTotal = parseFloat(d.monto_descuento);
+                    
+                    const precioUniSinIva = precioOriginal / 1.13;
+                    const montoDescuSinIva = montoDescuentoTotal / 1.13;
+                    
+                    return {
+                        numItem: idx + 1,
+                        tipoItem: parseInt(d.ti_cod) || 1,
+                        numeroDocumento: null,
+                        cantidad: cantidad,
+                        codigo: d.producto_id.toString(),
+                        codTributo: null,
+                        uniMedida: parseInt(d.um_cod) || 59,
+                        descripcion: d.descripcion,
+                        precioUni: precioUniSinIva,
+                        montoDescu: montoDescuSinIva,
+                        ventaNoSuj: 0,
+                        ventaExenta: 0,
+                        ventaGravada: (precioUniSinIva * cantidad) - montoDescuSinIva,
+                        tributos: ["20"],
+                        psv: 0,
+                        noGravado: 0,
+                        ivaItem: (precioCobrado * cantidad) - (precioCobrado * cantidad / 1.13)
+                    };
+                }),
                 resumen: {
                     totalNoSuj: 0,
                     totalExenta: 0,
-                    totalGravada: parseFloat(cuenta.total) / 1.13,
-                    subTotalVentasSinIva: parseFloat(cuenta.total) / 1.13,
+                    totalGravada: parseFloat((parseFloat(cuenta.total) / 1.13).toFixed(2)),
+                    subTotalVentasSinIva: parseFloat((parseFloat(cuenta.total) / 1.13).toFixed(2)),
                     descuNoSuj: 0,
                     descuExenta: 0,
-                    descuGravada: 0,
-                    totalDescu: 0,
+                    descuGravada: parseFloat((parseFloat(cuenta.descuento_total || 0) / 1.13).toFixed(2)),
+                    totalDescu: parseFloat((parseFloat(cuenta.descuento_total || 0) / 1.13).toFixed(2)),
                     tributos: [{
                         codigo: "20",
                         descripcion: "IVA 13%",
-                        valor: parseFloat(cuenta.total) - (parseFloat(cuenta.total) / 1.13)
+                        valor: parseFloat((parseFloat(cuenta.total) - (parseFloat(cuenta.total) / 1.13)).toFixed(2))
                     }],
-                    subTotal: parseFloat(cuenta.total),
+                    subTotal: parseFloat((parseFloat(cuenta.total) / 1.13).toFixed(2)),
                     ivaPerci1: 0,
                     ivaReteni1: 0,
                     retenMonto1: 0,
-                    montoTotalOperacion: parseFloat(cuenta.total),
+                    montoTotalOperacion: parseFloat(parseFloat(cuenta.total).toFixed(2)),
                     totalNoGravado: 0,
-                    totalPagar: parseFloat(cuenta.total),
-                    totalLetras: "DOLARES DE LOS ESTADOS UNIDOS DE AMERICA",
+                    totalPagar: parseFloat(parseFloat(cuenta.total).toFixed(2)),
+                    totalLetras: numeroALetras(parseFloat(cuenta.total)),
                     saldoFavor: 0,
                     condicionOperacion: cuenta.tipo_pago === 'credito' ? 2 : 1,
-                    pagos: abonos.map(a => ({
+                    pagos: abonos.length > 0 ? abonos.map(a => ({
                         codigo: a.fp_cod || "01",
-                        montoPagado: parseFloat(a.total_abonado),
+                        montoPagado: parseFloat(parseFloat(a.total_abonado).toFixed(2)),
                         referencia: a.referencia || null,
                         plazo: null,
                         periodo: null
-                    }))
+                    })) : (cuenta.estado === 'pagado' ? [{
+                        codigo: "01", // Efectivo por defecto
+                        montoPagado: parseFloat(parseFloat(cuenta.total).toFixed(2)),
+                        referencia: null,
+                        plazo: null,
+                        periodo: null
+                    }] : [])
                 },
                 extension: null,
                 apendice: null
@@ -196,6 +214,10 @@ const dteUtils = {
             const desc = item.descripcion.substring(0, 15).padEnd(16);
             const total = (item.ventaGravada + item.ivaItem).toFixed(2).padStart(8);
             ticket += `${item.cantidad.toString().padEnd(5)} ${desc} ${total}\n`;
+            if (item.montoDescu > 0) {
+                const totalDescuConIva = item.montoDescu * 1.13;
+                ticket += `      Desc. -$${totalDescuConIva.toFixed(2)}\n`;
+            }
         });
         
         ticket += `${dline}\n`;
@@ -298,7 +320,7 @@ const dteUtils = {
             doc.fillColor(primaryColor).font('Helvetica').fontSize(8);
 
             dte.cuerpoDocumento.forEach((item, index) => {
-                const descHeight = doc.heightOfString(item.descripcion, { width: 180 });
+                const descHeight = doc.heightOfString(item.descripcion, { width: 180 }) + (item.montoDescu > 0 ? 10 : 0);
                 const rowHeight = Math.max(18, descHeight + 6);
                 if (index % 2 !== 0) doc.rect(40, y, 530, rowHeight).fill(lightBg);
                 doc.fillColor(primaryColor);
@@ -306,7 +328,13 @@ const dteUtils = {
                 doc.text(item.cantidad, 65, y + 5);
                 doc.text('Unidad', 95, y + 5);
                 doc.text(item.codigo, 135, y + 5);
+                
                 doc.text(item.descripcion, 210, y + 5, { width: 180 });
+                if (item.montoDescu > 0) {
+                    doc.fillColor(accentColor).fontSize(7).text(`Descuento: -$${(item.montoDescu * 1.13).toFixed(2)}`, 210, y + doc.heightOfString(item.descripcion, { width: 180 }) + 2);
+                    doc.fillColor(primaryColor).fontSize(8);
+                }
+
                 const precioReal = (item.precioUni + (item.ivaItem/item.cantidad));
                 doc.text(`$${precioReal.toFixed(2)}`, 400, y + 5, { width: 50, align: 'right' });
                 doc.text(`$${(item.ventaGravada + item.ivaItem).toFixed(2)}`, 480, y + 5, { width: 80, align: 'right' });
@@ -319,8 +347,13 @@ const dteUtils = {
             const resX = 360;
             const resValX = 510;
             doc.font('Helvetica').fontSize(8).fillColor(secondaryColor);
+            
+            const gravadaMasIva = dte.resumen.totalGravada + (dte.resumen.tributos?.find(t => t.codigo === "20")?.valor || 0);
+            const totalDescuConIva = dte.resumen.totalDescu * 1.13;
+
             const rows = [
-                ['Suma de ventas gravadas:', `$${(dte.resumen.totalGravada + (dte.resumen.tributos?.find(t => t.codigo === "20")?.valor || 0)).toFixed(2)}`],
+                ['Suma de ventas gravadas:', `$${(gravadaMasIva + totalDescuConIva).toFixed(2)}`],
+                ['Total descuentos:', `-$${totalDescuConIva.toFixed(2)}`],
                 ['Suma total de operaciones:', `$${dte.resumen.totalPagar.toFixed(2)}`],
                 ['Sub-total:', `$${dte.resumen.totalPagar.toFixed(2)}`],
                 ['Monto total de la operación:', `$${dte.resumen.totalPagar.toFixed(2)}`]
