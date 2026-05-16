@@ -115,8 +115,11 @@ const dteUtils = {
                     const cantidad = parseFloat(d.cantidad_vendida);
                     const montoDescuentoTotal = parseFloat(d.monto_descuento);
                     
-                    const precioUniSinIva = precioOriginal / 1.13;
-                    const montoDescuSinIva = montoDescuentoTotal / 1.13;
+                    // Usamos los valores ya calculados y guardados en DB para evitar diferencias de redondeo
+                    const subtotalNeto = parseFloat(parseFloat(d.subtotal_neto).toFixed(2));
+                    const ivaMonto = parseFloat(parseFloat(d.iva_monto).toFixed(2));
+                    const precioUniSinIva = parseFloat((precioOriginal / 1.13).toFixed(2));
+                    const montoDescuSinIva = parseFloat((montoDescuentoTotal / 1.13).toFixed(2));
                     
                     return {
                         numItem: idx + 1,
@@ -131,18 +134,18 @@ const dteUtils = {
                         montoDescu: montoDescuSinIva,
                         ventaNoSuj: 0,
                         ventaExenta: 0,
-                        ventaGravada: (precioUniSinIva * cantidad) - montoDescuSinIva,
+                        ventaGravada: subtotalNeto,
                         tributos: ["20"],
                         psv: 0,
                         noGravado: 0,
-                        ivaItem: (precioCobrado * cantidad) - (precioCobrado * cantidad / 1.13)
+                        ivaItem: ivaMonto
                     };
                 }),
                 resumen: {
                     totalNoSuj: 0,
                     totalExenta: 0,
-                    totalGravada: parseFloat((parseFloat(cuenta.total) / 1.13).toFixed(2)),
-                    subTotalVentasSinIva: parseFloat((parseFloat(cuenta.total) / 1.13).toFixed(2)),
+                    totalGravada: parseFloat(parseFloat(cuenta.total_neto).toFixed(2)),
+                    subTotalVentasSinIva: parseFloat(parseFloat(cuenta.total_neto).toFixed(2)),
                     descuNoSuj: 0,
                     descuExenta: 0,
                     descuGravada: parseFloat((parseFloat(cuenta.descuento_total || 0) / 1.13).toFixed(2)),
@@ -150,9 +153,9 @@ const dteUtils = {
                     tributos: [{
                         codigo: "20",
                         descripcion: "IVA 13%",
-                        valor: parseFloat((parseFloat(cuenta.total) - (parseFloat(cuenta.total) / 1.13)).toFixed(2))
+                        valor: parseFloat(parseFloat(cuenta.total_iva).toFixed(2))
                     }],
-                    subTotal: parseFloat((parseFloat(cuenta.total) / 1.13).toFixed(2)),
+                    subTotal: parseFloat(parseFloat(cuenta.total_neto).toFixed(2)),
                     ivaPerci1: 0,
                     ivaReteni1: 0,
                     retenMonto1: 0,
@@ -169,7 +172,7 @@ const dteUtils = {
                         plazo: null,
                         periodo: null
                     })) : (cuenta.estado === 'pagado' ? [{
-                        codigo: "01", // Efectivo por defecto
+                        codigo: "01", 
                         montoPagado: parseFloat(parseFloat(cuenta.total).toFixed(2)),
                         referencia: null,
                         plazo: null,

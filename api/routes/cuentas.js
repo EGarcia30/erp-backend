@@ -324,15 +324,18 @@ router.post('/', async (req, res) => {
         // 2. Generar UUID
         const codigoGeneracion = await generateUUID(); // Genera un UUID único para esta cuenta/DTE
         
+        const totalNeto = parseFloat((total / 1.13).toFixed(2));
+        const totalIva = parseFloat((total - totalNeto).toFixed(2));
+
         // 3. Insert inicial con configuración dinámica de empresa
         const nuevaCuenta = await client.query(
             `INSERT INTO public.cuentas 
-             (cliente, cliente_id, total, descuento_total, tipo_cuenta, mesa_id, fecha_creado, 
+             (cliente, cliente_id, total, total_neto, total_iva, descuento_total, tipo_cuenta, mesa_id, fecha_creado, 
               total_pagado, total_pendiente, total_vuelto, estado, tipo_dte, 
               codigo_generacion, estado_dte, ambiente, tipo_modelo, tipo_operacion) 
-             VALUES ($1, $2, $3, $4, $5, $6, $7, 0, $3, 0, 'pendiente', $8, $9, 'pendiente', $10, $11, $12) 
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 0, $3, 0, 'pendiente', $10, $11, 'pendiente', $12, $13, $14) 
              RETURNING id`,
-            [cliente, cliente_id || null, total, req.body.descuento_total || 0, tipo_cuenta, mesa_id || null, fechaActual, 
+            [cliente, cliente_id || null, total, totalNeto, totalIva, req.body.descuento_total || 0, tipo_cuenta, mesa_id || null, fechaActual, 
              tipo_dte, codigoGeneracion, config.ambiente, config.tipo_modelo, config.tipo_operacion]
         );
         
@@ -361,17 +364,23 @@ router.post('/', async (req, res) => {
             'UPDATE public.cuentas SET numero_control = $1 WHERE id = $2',
             [numeroControl, cuentaId]
         );
-        
-        // Insert detalles...
+
+        // 6. Insertar Detalles
         for (const detalle of detalles) {
+            const subtotalLinea = detalle.precio_venta * detalle.cantidad_vendida;
+            const subtotalNeto = parseFloat((subtotalLinea / 1.13).toFixed(2));
+            const ivaMonto = parseFloat((subtotalLinea - subtotalNeto).toFixed(2));
+
             await client.query(
                 `INSERT INTO public.cuentas_detalle 
-                 (cuenta_id, producto_id, cantidad_vendida, precio_compra_actual, precio_venta, precio_original, monto_descuento, promocion_id, fecha_creado)
-                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+                 (cuenta_id, producto_id, cantidad_vendida, precio_compra_actual, precio_venta, 
+                  precio_original, monto_descuento, subtotal_neto, iva_monto, promocion_id, fecha_creado)
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
                 [cuentaId, detalle.producto_id, detalle.cantidad_vendida, 
                  detalle.precio_compra_actual, detalle.precio_venta,
                  detalle.precio_original || detalle.precio_venta,
                  detalle.monto_descuento || 0,
+                 subtotalNeto, ivaMonto,
                  detalle.promocion_id || null, fechaActual]
             );
         }
