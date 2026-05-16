@@ -335,7 +335,7 @@ router.post('/', async (req, res) => {
               codigo_generacion, estado_dte, ambiente, tipo_modelo, tipo_operacion) 
              VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $9, 0, $3, 0, 'pendiente', $10, $11, 'pendiente', $12, $13, $14) 
              RETURNING id`,
-            [cliente, cliente_id || null, total, totalNeto, totalIva, req.body.descuento_total || 0, tipo_cuenta, mesa_id || null, fechaActual, fechaActual, 
+            [cliente, cliente_id || null, total, totalNeto, totalIva, req.body.descuento_total || 0, tipo_cuenta, mesa_id || null, fechaActual, 
              tipo_dte, codigoGeneracion, config.ambiente, config.tipo_modelo, config.tipo_operacion]
         );
         
