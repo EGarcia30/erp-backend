@@ -110,14 +110,20 @@ const dteUtils = {
                     correo: cuenta.cl_correo || null
                 },
                 cuerpoDocumento: detalles.map((d, idx) => {
-                    const precioOriginal = parseFloat(d.precio_original);
-                    const precioCobrado = parseFloat(d.precio_venta);
-                    const cantidad = parseFloat(d.cantidad_vendida);
-                    const montoDescuentoTotal = parseFloat(d.monto_descuento);
+                    const precioOriginal = parseFloat(d.precio_original) || parseFloat(d.precio_venta) || 0;
+                    const precioCobrado = parseFloat(d.precio_venta) || 0;
+                    const cantidad = parseFloat(d.cantidad_vendida) || 0;
+                    const montoDescuentoTotal = parseFloat(d.monto_descuento) || 0;
                     
-                    // Usamos los valores ya calculados y guardados en DB para evitar diferencias de redondeo
-                    const subtotalNeto = parseFloat(parseFloat(d.subtotal_neto).toFixed(2));
-                    const ivaMonto = parseFloat(parseFloat(d.iva_monto).toFixed(2));
+                    // Fallback si los campos persistidos son 0 pero los valores base existen
+                    const subtotalNeto = (parseFloat(d.subtotal_neto) > 0) 
+                        ? parseFloat(parseFloat(d.subtotal_neto).toFixed(2))
+                        : parseFloat((precioCobrado * cantidad / 1.13).toFixed(2));
+
+                    const ivaMonto = (parseFloat(d.iva_monto) > 0)
+                        ? parseFloat(parseFloat(d.iva_monto).toFixed(2))
+                        : parseFloat((precioCobrado * cantidad - subtotalNeto).toFixed(2));
+
                     const precioUniSinIva = parseFloat((precioOriginal / 1.13).toFixed(2));
                     const montoDescuSinIva = parseFloat((montoDescuentoTotal / 1.13).toFixed(2));
                     
@@ -126,10 +132,10 @@ const dteUtils = {
                         tipoItem: parseInt(d.ti_cod) || 1,
                         numeroDocumento: null,
                         cantidad: cantidad,
-                        codigo: d.producto_id.toString(),
+                        codigo: d.producto_id?.toString() || "N/A",
                         codTributo: null,
                         uniMedida: parseInt(d.um_cod) || 59,
-                        descripcion: d.descripcion,
+                        descripcion: d.descripcion || "Sin descripción",
                         precioUni: precioUniSinIva,
                         montoDescu: montoDescuSinIva,
                         ventaNoSuj: 0,
@@ -144,8 +150,8 @@ const dteUtils = {
                 resumen: {
                     totalNoSuj: 0,
                     totalExenta: 0,
-                    totalGravada: parseFloat(parseFloat(cuenta.total_neto).toFixed(2)),
-                    subTotalVentasSinIva: parseFloat(parseFloat(cuenta.total_neto).toFixed(2)),
+                    totalGravada: parseFloat(parseFloat(cuenta.total_neto || (cuenta.total / 1.13)).toFixed(2)),
+                    subTotalVentasSinIva: parseFloat(parseFloat(cuenta.total_neto || (cuenta.total / 1.13)).toFixed(2)),
                     descuNoSuj: 0,
                     descuExenta: 0,
                     descuGravada: parseFloat((parseFloat(cuenta.descuento_total || 0) / 1.13).toFixed(2)),
@@ -153,27 +159,27 @@ const dteUtils = {
                     tributos: [{
                         codigo: "20",
                         descripcion: "IVA 13%",
-                        valor: parseFloat(parseFloat(cuenta.total_iva).toFixed(2))
+                        valor: parseFloat(parseFloat(cuenta.total_iva || (cuenta.total - (cuenta.total / 1.13))).toFixed(2))
                     }],
-                    subTotal: parseFloat(parseFloat(cuenta.total_neto).toFixed(2)),
+                    subTotal: parseFloat(parseFloat(cuenta.total_neto || (cuenta.total / 1.13)).toFixed(2)),
                     ivaPerci1: 0,
                     ivaReteni1: 0,
                     retenMonto1: 0,
-                    montoTotalOperacion: parseFloat(parseFloat(cuenta.total).toFixed(2)),
+                    montoTotalOperacion: parseFloat(parseFloat(cuenta.total || 0).toFixed(2)),
                     totalNoGravado: 0,
-                    totalPagar: parseFloat(parseFloat(cuenta.total).toFixed(2)),
-                    totalLetras: numeroALetras(parseFloat(cuenta.total)),
+                    totalPagar: parseFloat(parseFloat(cuenta.total || 0).toFixed(2)),
+                    totalLetras: numeroALetras(parseFloat(cuenta.total || 0)),
                     saldoFavor: 0,
                     condicionOperacion: cuenta.tipo_pago === 'credito' ? 2 : 1,
                     pagos: abonos.length > 0 ? abonos.map(a => ({
                         codigo: a.fp_cod || "01",
-                        montoPagado: parseFloat(parseFloat(a.total_abonado).toFixed(2)),
+                        montoPagado: parseFloat(parseFloat(a.total_abonado || 0).toFixed(2)),
                         referencia: a.referencia || null,
                         plazo: null,
                         periodo: null
                     })) : (cuenta.estado === 'pagado' ? [{
                         codigo: "01", 
-                        montoPagado: parseFloat(parseFloat(cuenta.total).toFixed(2)),
+                        montoPagado: parseFloat(parseFloat(cuenta.total || 0).toFixed(2)),
                         referencia: null,
                         plazo: null,
                         periodo: null
@@ -191,18 +197,26 @@ const dteUtils = {
     },
 
     /**
-     * Genera un string formateado para impresora térmica (Ticket Pro)
+     * Genera un string formateado para impresora térmica (32 caracteres de ancho)
      */
     async generarTicketTexto(dte) {
         const line = "-".repeat(32);
         const dline = "=".repeat(32);
         
+        // Función auxiliar para centrar texto en 32 columnas
+        const center = (txt) => {
+            const str = txt.toString().substring(0, 32);
+            const pad = Math.max(0, Math.floor((32 - str.length) / 2));
+            return " ".repeat(pad) + str;
+        };
+
         let ticket = "";
-        ticket += `${dte.emisor.nombreComercial || dte.emisor.nombre}\n`.toUpperCase();
-        ticket += `NIT: ${dte.emisor.nit}\nNRC: ${dte.emisor.nrc}\n`;
+        ticket += `${center(dte.emisor.nombreComercial || dte.emisor.nombre)}\n`.toUpperCase();
+        ticket += `${center("NIT: " + dte.emisor.nit)}\n`;
+        ticket += `${center("NRC: " + dte.emisor.nrc)}\n`;
         ticket += `${dte.emisor.direccion.complemento.substring(0, 32)}\n`;
         ticket += `${line}\n`;
-        ticket += `${dte.identificacion.tipoDte === '01' ? 'FACTURA ELECTRONICA' : 'CREDITO FISCAL ELEC.'}\n`;
+        ticket += `${center(dte.identificacion.tipoDte === '01' ? 'FACTURA ELECTRONICA' : 'CREDITO FISCAL')}\n`;
         ticket += `MOD: ${dte.identificacion.tipoModelo === 1 ? 'Previo' : 'Diferido'} | VER: ${dte.identificacion.version}\n`;
         ticket += `Cod. Gen: ${dte.identificacion.codigoGeneracion}\n`;
         ticket += `Num. Con: ${dte.identificacion.numeroControl}\n`;
@@ -214,9 +228,11 @@ const dteUtils = {
         ticket += `CANT  DESCRIPCION       TOTAL\n`;
         
         dte.cuerpoDocumento.forEach(item => {
+            // 5 chars (Cant) + 1 space + 16 chars (Desc) + 1 space + 8 chars (Total) = 31 chars
+            const cant = item.cantidad.toString().padEnd(5);
             const desc = item.descripcion.substring(0, 15).padEnd(16);
             const total = (item.ventaGravada + item.ivaItem).toFixed(2).padStart(8);
-            ticket += `${item.cantidad.toString().padEnd(5)} ${desc} ${total}\n`;
+            ticket += `${cant} ${desc} ${total}\n`;
             if (item.montoDescu > 0) {
                 const totalDescuConIva = item.montoDescu * 1.13;
                 ticket += `      Desc. -$${totalDescuConIva.toFixed(2)}\n`;
@@ -224,12 +240,22 @@ const dteUtils = {
         });
         
         ticket += `${dline}\n`;
-        ticket += `TOTAL A PAGAR:      $${dte.resumen.totalPagar.toFixed(2).padStart(8)}\n`;
+        const totalPagarLabel = "TOTAL A PAGAR:".padEnd(15);
+        const totalPagarVal = `$${dte.resumen.totalPagar.toFixed(2)}`.padStart(16);
+        ticket += `${totalPagarLabel}${totalPagarVal}\n`;
         ticket += `${dline}\n`;
-        ticket += `Gracias por su preferencia\n`;
-        ticket += `Validar en: https://consultadte.mh.gob.sv\n`;
+        ticket += `${center("Gracias por su preferencia")}\n`;
+        ticket += `${center("Validar en Hacienda:")}\n`;
         
-        return ticket;
+        // Generar QR para el ticket (Solo el QR se mantiene como HTML)
+        const qrData = `https://consultadte.mh.gob.sv/consulta/${dte.identificacion.codigoGeneracion}`;
+        const qrBase64 = await QRCode.toDataURL(qrData, { margin: 1, width: 200 });
+        
+        return {
+            texto: ticket,
+            qrBase64: qrBase64,
+            codigoGeneracion: dte.identificacion.codigoGeneracion
+        };
     },
 
     /**
@@ -271,12 +297,18 @@ const dteUtils = {
             doc.font('Helvetica-Bold').text('Sello de recepción:', 40, 135);
             doc.font('Helvetica').fillColor(secondaryColor).text('PENDIENTE DE TRANSMISIÓN', 40, 145);
 
-            doc.fillColor(primaryColor).font('Helvetica-Bold').text('Modelo de facturación:', 410, 85);
-            doc.font('Helvetica').text(dte.identificacion.tipoModelo === 1 ? 'Modelo Facturación previo' : 'Diferido', 515, 85, { align: 'right' });
-            doc.font('Helvetica-Bold').text('Tipo de transmisión:', 410, 100);
-            doc.font('Helvetica').text(dte.identificacion.tipoOperacion === 1 ? 'Transmisión normal' : 'Contingencia', 515, 100, { align: 'right' });
-            doc.font('Helvetica-Bold').text('Fecha y hora generación:', 410, 115);
-            doc.font('Helvetica').text(`${dte.identificacion.fecEmi} ${dte.identificacion.horEmi}`, 515, 115, { align: 'right' });
+            // ─── RE-POSICIONAMIENTO SECCIÓN DERECHA (PARA EVITAR SOLAPE) ───
+            const rightXLabel = 360;
+            const rightXVal = 570;
+
+            doc.fillColor(primaryColor).font('Helvetica-Bold').text('Modelo de facturación:', rightXLabel, 85);
+            doc.font('Helvetica').text(dte.identificacion.tipoModelo === 1 ? 'Previo' : 'Diferido', rightXLabel, 85, { width: 210, align: 'right' });
+            
+            doc.font('Helvetica-Bold').text('Tipo de transmisión:', rightXLabel, 100);
+            doc.font('Helvetica').text(dte.identificacion.tipoOperacion === 1 ? 'Normal' : 'Contingencia', rightXLabel, 100, { width: 210, align: 'right' });
+            
+            doc.font('Helvetica-Bold').text('Fecha/Hora generación:', rightXLabel, 115);
+            doc.font('Helvetica').text(`${dte.identificacion.fecEmi} ${dte.identificacion.horEmi}`, rightXLabel, 115, { width: 210, align: 'right' });
 
             // ─── SECCIONES EMISOR / RECEPTOR ───
             const boxY = 175;
@@ -287,25 +319,25 @@ const dteUtils = {
             doc.fillColor(accentColor).font('Helvetica-Bold').fontSize(9).text('EMISOR', 40, boxY + 5, { width: 260, align: 'center' });
             doc.fillColor(primaryColor).fontSize(8);
             doc.font('Helvetica-Bold').text(dte.emisor.nombre, 45, boxY + 20, { width: 250 });
-            doc.font('Helvetica-Bold').text('NIT:', 45, boxY + 40); doc.font('Helvetica').text(dte.emisor.nit, 65, boxY + 40);
-            doc.font('Helvetica-Bold').text('NRC:', 180, boxY + 40); doc.font('Helvetica').text(dte.emisor.nrc, 205, boxY + 40);
-            doc.font('Helvetica-Bold').text('Actividad:', 45, boxY + 52);
-            doc.font('Helvetica').text(dte.emisor.descActividad, 45, boxY + 62, { width: 250 });
-            doc.font('Helvetica-Bold').text('Dirección:', 45, boxY + 82);
-            doc.font('Helvetica').text(dte.emisor.direccion.complemento, 45, boxY + 92, { width: 250 });
+            doc.font('Helvetica-Bold').text('NIT:', 45, boxY + 45); doc.font('Helvetica').text(dte.emisor.nit, 65, boxY + 45);
+            doc.font('Helvetica-Bold').text('NRC:', 180, boxY + 45); doc.font('Helvetica').text(dte.emisor.nrc, 205, boxY + 45);
+            doc.font('Helvetica-Bold').text('Actividad:', 45, boxY + 57);
+            doc.font('Helvetica').text(dte.emisor.descActividad, 45, boxY + 67, { width: 250 });
+            doc.font('Helvetica-Bold').text('Dirección:', 45, boxY + 85);
+            doc.font('Helvetica').text(dte.emisor.direccion.complemento, 45, boxY + 95, { width: 250 });
 
             doc.fillColor(accentColor).font('Helvetica-Bold').fontSize(9).text('RECEPTOR', 310, boxY + 5, { width: 260, align: 'center' });
             doc.fillColor(primaryColor).fontSize(8);
             doc.font('Helvetica-Bold').text('Nombre:', 315, boxY + 20);
             doc.font('Helvetica').text(dte.receptor.nombre, 360, boxY + 20, { width: 200 });
-            doc.font('Helvetica-Bold').text('Tipo Doc:', 315, boxY + 40);
-            doc.font('Helvetica').text(dte.identificacion.tipoDte === '01' ? 'DUI' : 'NRC/NIT', 360, boxY + 40);
-            doc.font('Helvetica-Bold').text('No. Doc:', 315, boxY + 52);
-            doc.font('Helvetica').text(dte.receptor.numDocumento || 'N/A', 360, boxY + 52);
-            doc.font('Helvetica-Bold').text('Correo:', 315, boxY + 64);
-            doc.font('Helvetica').text(dte.receptor.correo || 'N/A', 360, boxY + 64, { width: 200 });
-            doc.font('Helvetica-Bold').text('Teléfono:', 315, boxY + 76);
-            doc.font('Helvetica').text(dte.receptor.telefono || 'N/A', 360, boxY + 76);
+            doc.font('Helvetica-Bold').text('Tipo Doc:', 315, boxY + 45);
+            doc.font('Helvetica').text(dte.identificacion.tipoDte === '01' ? 'DUI' : 'NRC/NIT', 360, boxY + 45);
+            doc.font('Helvetica-Bold').text('No. Doc:', 315, boxY + 57);
+            doc.font('Helvetica').text(dte.receptor.numDocumento || 'N/A', 360, boxY + 57);
+            doc.font('Helvetica-Bold').text('Correo:', 315, boxY + 69);
+            doc.font('Helvetica').text(dte.receptor.correo || 'N/A', 360, boxY + 69, { width: 200 });
+            doc.font('Helvetica-Bold').text('Teléfono:', 315, boxY + 81);
+            doc.font('Helvetica').text(dte.receptor.telefono || 'N/A', 360, boxY + 81);
 
             // ─── TABLA DE PRODUCTOS ───
             let y = boxY + boxHeight + 15;
@@ -323,10 +355,12 @@ const dteUtils = {
             doc.fillColor(primaryColor).font('Helvetica').fontSize(8);
 
             dte.cuerpoDocumento.forEach((item, index) => {
-                const descHeight = doc.heightOfString(item.descripcion, { width: 180 }) + (item.montoDescu > 0 ? 10 : 0);
-                const rowHeight = Math.max(18, descHeight + 6);
+                const textHeight = doc.heightOfString(item.descripcion, { width: 180 });
+                const rowHeight = Math.max(22, textHeight + (item.montoDescu > 0 ? 15 : 10));
+                
                 if (index % 2 !== 0) doc.rect(40, y, 530, rowHeight).fill(lightBg);
                 doc.fillColor(primaryColor);
+                
                 doc.text(item.numItem, 45, y + 5);
                 doc.text(item.cantidad, 65, y + 5);
                 doc.text('Unidad', 95, y + 5);
@@ -334,15 +368,22 @@ const dteUtils = {
                 
                 doc.text(item.descripcion, 210, y + 5, { width: 180 });
                 if (item.montoDescu > 0) {
-                    doc.fillColor(accentColor).fontSize(7).text(`Descuento: -$${(item.montoDescu * 1.13).toFixed(2)}`, 210, y + doc.heightOfString(item.descripcion, { width: 180 }) + 2);
-                    doc.fillColor(primaryColor).fontSize(8);
+                    doc.fillColor(accentColor).fontSize(7).font('Helvetica-Bold');
+                    const descuConIva = item.montoDescu * 1.13;
+                    doc.text(`Descuento aplicado: -$${descuConIva.toFixed(2)}`, 210, y + textHeight + 2);
+                    doc.fillColor(primaryColor).fontSize(8).font('Helvetica');
                 }
 
-                const precioReal = (item.precioUni + (item.ivaItem/item.cantidad));
-                doc.text(`$${precioReal.toFixed(2)}`, 400, y + 5, { width: 50, align: 'right' });
-                doc.text(`$${(item.ventaGravada + item.ivaItem).toFixed(2)}`, 480, y + 5, { width: 80, align: 'right' });
+                // El precio unitario visual para el cliente debe ser el ORIGINAL con IVA
+                const precioUnitarioConIva = (item.precioUni * 1.13);
+                doc.text(`$${precioUnitarioConIva.toFixed(2)}`, 400, y + 5, { width: 50, align: 'right' });
+                
+                // La venta gravada visual es lo que realmente paga por esa linea (con IVA)
+                const totalLineaConIva = (item.ventaGravada + item.ivaItem);
+                doc.text(`$${totalLineaConIva.toFixed(2)}`, 480, y + 5, { width: 80, align: 'right' });
+                
                 y += rowHeight;
-                if (y > 680) { doc.addPage(); y = 50; }
+                if (y > 650) { doc.addPage(); y = 50; }
             });
 
             // ─── RESUMEN Y TOTALES ───
@@ -351,15 +392,17 @@ const dteUtils = {
             const resValX = 510;
             doc.font('Helvetica').fontSize(8).fillColor(secondaryColor);
             
-            const gravadaMasIva = dte.resumen.totalGravada + (dte.resumen.tributos?.find(t => t.codigo === "20")?.valor || 0);
+            const totalPagar = dte.resumen.totalPagar;
             const totalDescuConIva = dte.resumen.totalDescu * 1.13;
+            const sumaVentasGravadas = totalPagar + totalDescuConIva;
 
             const rows = [
-                ['Suma de ventas gravadas:', `$${(gravadaMasIva + totalDescuConIva).toFixed(2)}`],
+                ['Suma de ventas gravadas:', `$${sumaVentasGravadas.toFixed(2)}`],
                 ['Total descuentos:', `-$${totalDescuConIva.toFixed(2)}`],
-                ['Suma total de operaciones:', `$${dte.resumen.totalPagar.toFixed(2)}`],
-                ['Sub-total:', `$${dte.resumen.totalPagar.toFixed(2)}`],
-                ['Monto total de la operación:', `$${dte.resumen.totalPagar.toFixed(2)}`]
+                ['Suma total de operaciones:', `$${totalPagar.toFixed(2)}`],
+                ['Sub-total:', `$${totalPagar.toFixed(2)}`],
+                ['IVA 13% (incluido):', `$${dte.resumen.tributos?.find(t => t.codigo === "20")?.valor.toFixed(2) || '0.00'}`],
+                ['Monto total de la operación:', `$${totalPagar.toFixed(2)}`]
             ];
             rows.forEach(row => {
                 doc.text(row[0], resX, y);
