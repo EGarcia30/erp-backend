@@ -367,9 +367,21 @@ router.post('/', async (req, res) => {
 
         // 6. Insertar Detalles
         for (const detalle of detalles) {
+            // Obtener el tipo de impuesto del producto
+            const prodRes = await client.query('SELECT tipo_impuesto FROM public.productos WHERE id = $1', [detalle.producto_id]);
+            const tipoImpuesto = prodRes.rows[0]?.tipo_impuesto || '1'; // Default Gravado
+
+            let subtotalNeto = 0;
+            let ivaMonto = 0;
             const subtotalLinea = detalle.precio_venta * detalle.cantidad_vendida;
-            const subtotalNeto = parseFloat((subtotalLinea / 1.13).toFixed(2));
-            const ivaMonto = parseFloat((subtotalLinea - subtotalNeto).toFixed(2));
+
+            if (tipoImpuesto === '1') { // Gravado
+                subtotalNeto = parseFloat((subtotalLinea / 1.13).toFixed(2));
+                ivaMonto = parseFloat((subtotalLinea - subtotalNeto).toFixed(2));
+            } else { // Exento o No Sujeto
+                subtotalNeto = parseFloat(subtotalLinea.toFixed(2));
+                ivaMonto = 0;
+            }
 
             await client.query(
                 `INSERT INTO public.cuentas_detalle 
@@ -488,38 +500,70 @@ router.patch('/:id', async (req, res) => {
             return res.status(404).json({ success: false, error: `Cuenta ${id} no encontrada o ya pagada` });
         }
 
-        // DELETE + INSERT detalles con promociones
+        // DELETE + INSERT detalles con promociones y campos fiscales
         const [updateResult, deleteResult] = await Promise.all([
             db.query(`UPDATE public.cuentas SET cliente = $1, cliente_id = $2, tipo_cuenta = $3, mesa_id = $4 WHERE id = $5`,
                 [cliente, cliente_id || null, tipo_cuenta, mesa_id || null, id]),
             db.query('DELETE FROM public.cuentas_detalle WHERE cuenta_id = $1', [id])
         ]);
-        // ✅ INSERT NUEVOS DETALLES CON PROMO
+        
+        // ✅ INSERT NUEVOS DETALLES CON FISCALIDAD (PRESERVANDO DATOS)
+        let totalNeto = 0;
+        let totalIva = 0;
+        let totalDescuento = 0;
+
         if (detalles && detalles.length > 0) {
             for (const detalle of detalles) {
+                // Obtenemos tipo impuesto del catálogo para cálculo de IVA si el detalle no trae el desglose fiscal
+                const prodRes = await db.query('SELECT tipo_impuesto FROM public.productos WHERE id = $1', [detalle.producto_id]);
+                const tipoImpuesto = prodRes.rows[0]?.tipo_impuesto || '1';
+
+                // Si vienen valores de auditoría fiscal válidos (>0), los usamos; de lo contrario, calculamos
+                let subtotalNeto = parseFloat(detalle.subtotal_neto);
+                let ivaMonto = parseFloat(detalle.iva_monto);
+                
+                // Forzar recálculo si son 0 o inválidos (caso de productos nuevos o mal formados)
+                if (isNaN(subtotalNeto) || subtotalNeto <= 0 || isNaN(ivaMonto)) {
+                    const subtotalLinea = detalle.precio_venta * detalle.cantidad_vendida;
+                    if (tipoImpuesto === '1') { // Gravado
+                        subtotalNeto = parseFloat((subtotalLinea / 1.13).toFixed(2));
+                        ivaMonto = parseFloat((subtotalLinea - subtotalNeto).toFixed(2));
+                    } else { // Exento o No Sujeto
+                        subtotalNeto = parseFloat(subtotalLinea.toFixed(2));
+                        ivaMonto = 0;
+                    }
+                }
+                
+                const precioOriginal = parseFloat(detalle.precio_original) || parseFloat(detalle.precio_venta);
+                const montoDescuento = parseFloat(detalle.monto_descuento) || parseFloat(((precioOriginal - detalle.precio_venta) * detalle.cantidad_vendida).toFixed(2));
+
                 await db.query(`
                     INSERT INTO public.cuentas_detalle 
-                    (cuenta_id, producto_id, cantidad_vendida, precio_compra_actual, precio_venta, promocion_id, fecha_creado)
-                    VALUES ($1, $2, $3, $4, $5, $6, $7)
+                    (cuenta_id, producto_id, cantidad_vendida, precio_compra_actual, precio_venta, 
+                     precio_original, monto_descuento, subtotal_neto, iva_monto, promocion_id, fecha_creado)
+                    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
                 `, [
-                    id, 
-                    detalle.producto_id, 
-                    parseInt(detalle.cantidad_vendida), 
+                    id, detalle.producto_id, parseInt(detalle.cantidad_vendida), 
                     parseFloat(detalle.precio_compra_actual) || 0,
-                    parseFloat(detalle.precio_venta),  // precio final aplicado
-                    detalle.promocion_id || null,  // ✅ promocion_id
+                    parseFloat(detalle.precio_venta),
+                    precioOriginal,
+                    montoDescuento,
+                    subtotalNeto,
+                    ivaMonto,
+                    detalle.promocion_id || null,
                     fechaActual
                 ]);
+
+                totalNeto += subtotalNeto;
+                totalIva += ivaMonto;
+                totalDescuento += montoDescuento;
             }
         }
 
-        // Recalcular total
-        const totalResult = await db.query(`
-            SELECT COALESCE(SUM(cantidad_vendida * precio_venta), 0) as total
-            FROM public.cuentas_detalle WHERE cuenta_id = $1`, [id]);
-        
-        const total = parseFloat(totalResult.rows[0].total) || 0.00;
-        await db.query('UPDATE public.cuentas SET total = $1 WHERE id = $2', [total, id]);
+        // Recalcular total y actualizar cabecera
+        const total = parseFloat((totalNeto + totalIva).toFixed(2));
+        await db.query('UPDATE public.cuentas SET total = $1, total_neto = $2, total_iva = $3, descuento_total = $4 WHERE id = $5', 
+            [total, totalNeto, totalIva, totalDescuento, id]);
 
         if (mesa_id) {
             await db.query('UPDATE public.mesas SET estado = $1 WHERE id = $2', ['ocupada', mesa_id]);

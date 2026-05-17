@@ -49,7 +49,7 @@ router.get('/', async (req, res) => {
             p.cantidad_disponible::numeric, p.cantidad_minima::numeric,
             p.cantidad_maxima::numeric, p.precio_compra::numeric, 
             p.precio_venta::numeric, p.precio_venta::numeric as precio_venta_original,
-            p.fecha_creado, p.activo,
+            p.fecha_creado, p.activo, p.tipo_impuesto,
             p.tipo_item_id, p.unidad_medida_id,
             c.codigo as categoria_codigo, 
             c.nombre as categoria_nombre, 
@@ -241,7 +241,7 @@ router.patch('/:id', async (req, res) => {
                 p.cantidad_disponible::numeric, p.cantidad_minima::numeric, 
                 p.cantidad_maxima::numeric, p.precio_compra::numeric, 
                 p.precio_venta::numeric, p.categoria_id, p.fecha_creado, p.activo,
-                p.tipo_item_id, p.unidad_medida_id,
+                p.tipo_item_id, p.unidad_medida_id, p.tipo_impuesto,
                 c.codigo as categoria_codigo, c.nombre as categoria_nombre,
                 ti.nombre as tipo_item_nombre,
                 um.nombre as unidad_medida_nombre,
@@ -293,9 +293,9 @@ router.post('/', async (req, res) => {
             INSERT INTO public.productos (
                 descripcion, proveedor, presentacion, 
                 cantidad_disponible, cantidad_minima, cantidad_maxima,
-                precio_compra, precio_venta, categoria_id, activo, fecha_creado,
+                precio_compra, precio_venta, categoria_id, tipo_impuesto, activo, fecha_creado,
                 tipo_item_id, unidad_medida_id
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, COALESCE($9, 1), true, $10, COALESCE($11, 1), COALESCE($12, (SELECT id FROM public.unidades_medida WHERE codigo = '59' LIMIT 1)))
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, true, $11, COALESCE($12, 1), COALESCE($13, (SELECT id FROM public.unidades_medida WHERE codigo = '59' LIMIT 1)))
             RETURNING id
         `;
         
@@ -304,6 +304,7 @@ router.post('/', async (req, res) => {
             producto.cantidad_disponible, producto.cantidad_minima, producto.cantidad_maxima,
             producto.precio_compra, producto.precio_venta,
             producto.categoria_id,
+            producto.tipo_impuesto || '1',
             fechaLocal,
             producto.tipo_item_id,
             producto.unidad_medida_id
@@ -331,7 +332,7 @@ router.post('/', async (req, res) => {
                 p.cantidad_disponible::numeric, p.cantidad_minima::numeric, 
                 p.cantidad_maxima::numeric, p.precio_compra::numeric, 
                 p.precio_venta::numeric, p.categoria_id, p.fecha_creado, p.activo,
-                p.tipo_item_id, p.unidad_medida_id,
+                p.tipo_item_id, p.unidad_medida_id, p.tipo_impuesto,
                 c.codigo as categoria_codigo, c.nombre as categoria_nombre,
                 ti.nombre as tipo_item_nombre,
                 um.nombre as unidad_medida_nombre,
